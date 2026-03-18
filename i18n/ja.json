@@ -45,5 +45,6 @@
   "convert_heic_option": "HEIC/HEIFファイルをJPGに変換する",
   "generate_organized_zip": "整理済みZIPを生成",
   "generating_zip": "ZIP生成中...",
-  "download_organized_zip": "整理済みZIPをダウンロード"
+  "download_organized_zip": "整理済みZIPをダウンロード",
+  "report_issue": "不具合を報告"
 }

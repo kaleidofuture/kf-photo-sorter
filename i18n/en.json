@@ -45,5 +45,6 @@
   "convert_heic_option": "Convert HEIC/HEIF files to JPG",
   "generate_organized_zip": "Generate Organized ZIP",
   "generating_zip": "Generating ZIP...",
-  "download_organized_zip": "Download Organized ZIP"
+  "download_organized_zip": "Download Organized ZIP",
+  "report_issue": "Report an issue"
 }
