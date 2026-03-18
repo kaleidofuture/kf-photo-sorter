@@ -5,8 +5,9 @@ import streamlit as st
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
+    HEIF_AVAILABLE = True
 except ImportError:
-    pass  # pillow-heif not available, HEIC files won't be supported
+    HEIF_AVAILABLE = False
 
 st.set_page_config(
     page_title="KF-PhotoSorter",
@@ -21,6 +22,7 @@ from components.i18n import t
 import zipfile
 import io
 import csv
+import hashlib
 from collections import defaultdict
 
 import exifread
@@ -44,6 +46,8 @@ def extract_exif(file_bytes: bytes, filename: str) -> dict:
         "gps_lon": None,
         "width": None,
         "height": None,
+        "file_size": len(file_bytes),
+        "md5": hashlib.md5(file_bytes).hexdigest(),
     }
 
     try:
@@ -99,6 +103,93 @@ def _convert_gps(coord_tag, ref_tag) -> float | None:
         return None
 
 
+def find_duplicates(photo_data: list[dict]) -> tuple[list[list[dict]], int]:
+    """Find duplicate files by MD5 hash. Returns (groups, saveable_bytes)."""
+    hash_groups = defaultdict(list)
+    for p in photo_data:
+        hash_groups[p["md5"]].append(p)
+
+    duplicate_groups = [group for group in hash_groups.values() if len(group) > 1]
+    saveable = sum(
+        sum(p["file_size"] for p in group[1:])
+        for group in duplicate_groups
+    )
+    return duplicate_groups, saveable
+
+
+def get_top_largest(photo_data: list[dict], n: int = 20) -> list[dict]:
+    """Return top N largest files."""
+    return sorted(photo_data, key=lambda p: p["file_size"], reverse=True)[:n]
+
+
+def format_size(size_bytes: int) -> str:
+    """Format bytes to human-readable string."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes} B"
+
+
+def build_organized_zip(file_map: dict[str, bytes], photo_data: list[dict], convert_heic: bool) -> bytes:
+    """Build a ZIP with photos organized into YYYY-MM/ folders.
+
+    Args:
+        file_map: filename -> raw bytes mapping
+        photo_data: list of EXIF dicts
+        convert_heic: if True, convert HEIC files to JPG
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        used_names = set()
+        for p in photo_data:
+            # Determine folder
+            if p["date"]:
+                try:
+                    date_str = p["date"][:7].replace(":", "-")  # "YYYY-MM"
+                except Exception:
+                    date_str = "unknown"
+            else:
+                date_str = "unknown"
+
+            original_name = p["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            raw_bytes = file_map.get(p["filename"])
+            if raw_bytes is None:
+                continue
+
+            ext_lower = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+            should_convert = convert_heic and ext_lower in ("heic", "heif") and HEIF_AVAILABLE
+
+            if should_convert:
+                try:
+                    img = Image.open(io.BytesIO(raw_bytes))
+                    jpg_buf = io.BytesIO()
+                    img.convert("RGB").save(jpg_buf, format="JPEG", quality=92)
+                    raw_bytes = jpg_buf.getvalue()
+                    # Change extension
+                    base = original_name.rsplit(".", 1)[0]
+                    original_name = base + ".jpg"
+                except Exception:
+                    pass  # Keep original if conversion fails
+
+            # Deduplicate names within the zip
+            target_path = f"{date_str}/{original_name}"
+            if target_path in used_names:
+                base, ext = (original_name.rsplit(".", 1) + [""])[:2]
+                counter = 2
+                while True:
+                    new_name = f"{base}_{counter}.{ext}" if ext else f"{base}_{counter}"
+                    target_path = f"{date_str}/{new_name}"
+                    if target_path not in used_names:
+                        break
+                    counter += 1
+
+            used_names.add(target_path)
+            zf.writestr(target_path, raw_bytes)
+
+    return buf.getvalue()
+
+
 # --- Main Content ---
 st.subheader(t("upload_title"))
 st.caption(t("upload_help").format(max_mb=MAX_ZIP_SIZE_MB))
@@ -124,6 +215,7 @@ else:
     )
 
 photo_data = []
+file_map = {}  # filename -> raw bytes (for ZIP generation)
 processing_error = None
 
 if uploaded_file is not None:
@@ -148,6 +240,7 @@ if uploaded_file is not None:
                         continue
 
                     file_bytes = zf.read(name)
+                    file_map[name] = file_bytes
                     exif = extract_exif(file_bytes, name)
                     photo_data.append(exif)
 
@@ -162,6 +255,7 @@ elif uploaded_files:
         try:
             for uf in uploaded_files:
                 file_bytes = uf.read()
+                file_map[uf.name] = file_bytes
                 exif = extract_exif(file_bytes, uf.name)
                 photo_data.append(exif)
         except Exception as e:
@@ -178,9 +272,25 @@ elif uploaded_file is not None or uploaded_files:
     else:
         st.success(t("found_images").format(count=len(photo_data)))
 
+        # --- Duplicate Detection ---
+        dup_groups, saveable_bytes = find_duplicates(photo_data)
+        if dup_groups:
+            dup_count = sum(len(g) - 1 for g in dup_groups)
+            st.warning(
+                t("duplicate_found").format(
+                    count=dup_count,
+                    size=format_size(saveable_bytes),
+                )
+            )
+            with st.expander(t("duplicate_details")):
+                for i, group in enumerate(dup_groups, 1):
+                    st.markdown(f"**{t('duplicate_group')} {i}** (MD5: `{group[0]['md5'][:12]}...`)")
+                    for p in group:
+                        st.caption(f"  {p['filename']}  ({format_size(p['file_size'])})")
+
         # --- Summary tabs ---
-        tab_all, tab_date, tab_camera = st.tabs([
-            t("tab_all"), t("tab_by_date"), t("tab_by_camera")
+        tab_all, tab_date, tab_camera, tab_size = st.tabs([
+            t("tab_all"), t("tab_by_date"), t("tab_by_camera"), t("tab_size_ranking")
         ])
 
         with tab_all:
@@ -192,6 +302,7 @@ elif uploaded_file is not None or uploaded_files:
                     t("col_date"): p["date"] or "-",
                     t("col_camera"): f"{p['camera_make'] or ''} {p['camera_model'] or ''}".strip() or "-",
                     t("col_size"): f"{p['width']}x{p['height']}" if p["width"] else "-",
+                    t("col_filesize"): format_size(p["file_size"]),
                     t("col_gps"): f"{p['gps_lat']}, {p['gps_lon']}" if p["gps_lat"] else "-",
                 }
                 display_data.append(row)
@@ -227,11 +338,29 @@ elif uploaded_file is not None or uploaded_files:
                     date_str = item["date"][:10].replace(":", "-") if item["date"] else "-"
                     st.caption(f"  {item['filename']}  |  {date_str}")
 
+        with tab_size:
+            # Top 20 largest files
+            st.markdown(f"**{t('top_largest_title')}**")
+            largest = get_top_largest(photo_data, 20)
+            size_table = []
+            for rank, p in enumerate(largest, 1):
+                size_table.append({
+                    "#": rank,
+                    t("col_filename"): p["filename"],
+                    t("col_filesize"): format_size(p["file_size"]),
+                    t("col_dimensions"): f"{p['width']}x{p['height']}" if p["width"] else "-",
+                    t("col_date"): p["date"][:10].replace(":", "-") if p["date"] else "-",
+                })
+            st.dataframe(size_table, use_container_width=True)
+
+            total_size = sum(p["file_size"] for p in photo_data)
+            st.info(t("total_size_info").format(size=format_size(total_size)))
+
         # --- CSV Download ---
         st.markdown("---")
         csv_buffer = io.StringIO()
         fieldnames = ["filename", "date", "camera_make", "camera_model",
-                      "width", "height", "gps_lat", "gps_lon"]
+                      "width", "height", "gps_lat", "gps_lon", "file_size", "md5"]
         writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
         writer.writeheader()
         for p in photo_data:
@@ -243,6 +372,25 @@ elif uploaded_file is not None or uploaded_files:
             file_name="photo_metadata.csv",
             mime="text/csv",
         )
+
+        # --- Organized ZIP Download ---
+        st.markdown(f"#### {t('organized_zip_title')}")
+        st.caption(t("organized_zip_help"))
+
+        convert_heic = False
+        if HEIF_AVAILABLE:
+            convert_heic = st.checkbox(t("convert_heic_option"), value=False)
+
+        if st.button(t("generate_organized_zip"), type="primary"):
+            with st.spinner(t("generating_zip")):
+                organized_bytes = build_organized_zip(file_map, photo_data, convert_heic)
+            st.download_button(
+                label=t("download_organized_zip"),
+                data=organized_bytes,
+                file_name="photos_organized.zip",
+                mime="application/zip",
+                key="download_organized_zip_btn",
+            )
 
 else:
     st.info(t("no_file"))
