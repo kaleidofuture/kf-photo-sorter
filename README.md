@@ -1,3 +1,14 @@
+---
+title: kf-photo-sorter
+emoji: 🚀
+colorFrom: green
+colorTo: blue
+sdk: streamlit
+sdk_version: 1.44.1
+app_file: app.py
+pinned: false
+---
+
 # KF-PhotoSorter
 
 > 写真のEXIFメタデータを一括抽出して、日付別・カメラ別に整理する。
