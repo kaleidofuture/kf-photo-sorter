@@ -396,4 +396,4 @@ else:
     st.info(t("no_file"))
 
 # --- Footer ---
-render_footer(libraries=["ExifRead", "Pillow"])
+render_footer(libraries=["ExifRead", "Pillow"], repo_name="kf-photo-sorter")
