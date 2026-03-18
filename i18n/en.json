@@ -27,5 +27,9 @@
   "download_csv": "Download Metadata CSV",
   "bad_zip": "The ZIP file is corrupted or invalid.",
   "error": "An error occurred: {error}",
-  "no_file": "Please upload a ZIP file containing photos."
+  "no_file": "Please upload a ZIP file containing photos.",
+  "upload_mode": "Upload Method",
+  "mode_zip": "ZIP File",
+  "mode_files": "Select image files directly (mobile-friendly)",
+  "desktop_recommended": "This app is optimized for desktop use"
 }

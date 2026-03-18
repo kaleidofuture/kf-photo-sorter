@@ -27,5 +27,9 @@
   "download_csv": "メタデータCSVをダウンロード",
   "bad_zip": "ZIPファイルが壊れているか、正しくありません。",
   "error": "エラーが発生しました: {error}",
-  "no_file": "ZIPファイルをアップロードしてください。"
+  "no_file": "ZIPファイルをアップロードしてください。",
+  "upload_mode": "アップロード方法",
+  "mode_zip": "ZIPファイル",
+  "mode_files": "画像ファイルを直接選択（スマホ対応）",
+  "desktop_recommended": "このアプリはデスクトップでのご利用を推奨しています"
 }
